@@ -12,13 +12,74 @@ import '../../../settings/presentation/providers/settings_provider.dart';
 import '../providers/json_formatter_provider.dart';
 
 class JsonHighlightController extends TextEditingController {
-  final bool isDark;
-  final bool enableHighlight;
+  bool isDark;
+  bool enableHighlight;
+  String searchQuery = '';
+  int currentMatchStart = -1;
 
   JsonHighlightController({
     required this.isDark,
     required this.enableHighlight,
   });
+
+  void updateSearch(String query, int matchStart) {
+    searchQuery = query;
+    currentMatchStart = matchStart;
+    notifyListeners();
+  }
+
+  List<TextSpan> _applySearchHighlight(String segmentText, TextStyle? baseStyle, int segmentOffset) {
+    if (searchQuery.isEmpty) {
+      return [TextSpan(text: segmentText, style: baseStyle)];
+    }
+
+    final List<TextSpan> spans = [];
+    final lowerSegment = segmentText.toLowerCase();
+    final lowerQuery = searchQuery.toLowerCase();
+    
+    int start = 0;
+    int index = lowerSegment.indexOf(lowerQuery, start);
+    
+    if (index == -1) {
+      return [TextSpan(text: segmentText, style: baseStyle)];
+    }
+
+    while (index != -1) {
+      if (index > start) {
+        spans.add(TextSpan(
+          text: segmentText.substring(start, index),
+          style: baseStyle,
+        ));
+      }
+
+      final matchText = segmentText.substring(index, index + searchQuery.length);
+      final absoluteIndex = segmentOffset + index;
+      final isActive = absoluteIndex == currentMatchStart;
+
+      spans.add(TextSpan(
+        text: matchText,
+        style: baseStyle?.copyWith(
+          backgroundColor: isActive 
+              ? Colors.orange.withValues(alpha: 0.7) 
+              : Colors.yellow.withValues(alpha: 0.4),
+          color: isActive ? Colors.white : baseStyle.color,
+          fontWeight: isActive ? FontWeight.bold : baseStyle.fontWeight,
+        ),
+      ));
+
+      start = index + searchQuery.length;
+      index = lowerSegment.indexOf(lowerQuery, start);
+    }
+
+    if (start < segmentText.length) {
+      spans.add(TextSpan(
+        text: segmentText.substring(start),
+        style: baseStyle,
+      ));
+    }
+
+    return spans;
+  }
 
   @override
   TextSpan buildTextSpan({
@@ -27,7 +88,12 @@ class JsonHighlightController extends TextEditingController {
     required bool withComposing,
   }) {
     if (!enableHighlight || text.length > 80000) {
-      // Fallback for large files (>80KB) to ensure flawless scrolling and typing performance
+      if (searchQuery.isNotEmpty) {
+        return TextSpan(
+          children: _applySearchHighlight(text, style, 0),
+          style: style,
+        );
+      }
       return TextSpan(text: text, style: style);
     }
 
@@ -156,7 +222,22 @@ class JsonHighlightController extends TextEditingController {
       children.add(TextSpan(text: text.substring(lastMatchEnd), style: style));
     }
 
-    return TextSpan(children: children, style: style);
+    // Apply search query highlighting on top of syntax highlights
+    final List<TextSpan> finalChildren = [];
+    int currentOffset = 0;
+
+    for (final span in children) {
+      final spanText = span.text;
+      if (spanText == null || spanText.isEmpty) {
+        finalChildren.add(span);
+        continue;
+      }
+
+      finalChildren.addAll(_applySearchHighlight(spanText, span.style, currentOffset));
+      currentOffset += spanText.length;
+    }
+
+    return TextSpan(children: finalChildren, style: style);
   }
 }
 
@@ -188,6 +269,10 @@ class _JsonEditorWidgetState extends ConsumerState<JsonEditorWidget> {
   @override
   void initState() {
     super.initState();
+    _controller = JsonHighlightController(
+      isDark: false,
+      enableHighlight: true,
+    );
     _textScrollController = ScrollController();
     _lineScrollController = ScrollController();
     _focusNode = FocusNode();
@@ -215,6 +300,7 @@ class _JsonEditorWidgetState extends ConsumerState<JsonEditorWidget> {
         _searchIndices = [];
         _currentSearchMatchIndex = -1;
       });
+      _controller.updateSearch('', -1);
       return;
     }
 
@@ -234,17 +320,21 @@ class _JsonEditorWidgetState extends ConsumerState<JsonEditorWidget> {
       _currentSearchMatchIndex = indices.isNotEmpty ? 0 : -1;
     });
 
+    _controller.updateSearch(query, indices.isNotEmpty ? indices[0] : -1);
+
     if (indices.isNotEmpty) {
-      _selectAndScrollToMatch(indices[0], query.length);
+      _selectAndScrollToMatch(indices[0], query.length, requestFocus: false);
     }
   }
 
-  void _selectAndScrollToMatch(int start, int length) {
+  void _selectAndScrollToMatch(int start, int length, {bool requestFocus = false}) {
     _controller.selection = TextSelection(
       baseOffset: start,
       extentOffset: start + length,
     );
-    _focusNode.requestFocus();
+    if (requestFocus) {
+      _focusNode.requestFocus();
+    }
   }
 
   void _nextSearchMatch() {
@@ -253,9 +343,12 @@ class _JsonEditorWidgetState extends ConsumerState<JsonEditorWidget> {
       _currentSearchMatchIndex =
           (_currentSearchMatchIndex + 1) % _searchIndices.length;
     });
+    final start = _searchIndices[_currentSearchMatchIndex];
+    _controller.updateSearch(_searchController.text, start);
     _selectAndScrollToMatch(
-      _searchIndices[_currentSearchMatchIndex],
+      start,
       _searchController.text.length,
+      requestFocus: false,
     );
   }
 
@@ -266,9 +359,12 @@ class _JsonEditorWidgetState extends ConsumerState<JsonEditorWidget> {
           (_currentSearchMatchIndex - 1 + _searchIndices.length) %
           _searchIndices.length;
     });
+    final start = _searchIndices[_currentSearchMatchIndex];
+    _controller.updateSearch(_searchController.text, start);
     _selectAndScrollToMatch(
-      _searchIndices[_currentSearchMatchIndex],
+      start,
       _searchController.text.length,
+      requestFocus: false,
     );
   }
 
@@ -352,10 +448,7 @@ class _JsonEditorWidgetState extends ConsumerState<JsonEditorWidget> {
     final formatterState = ref.watch(jsonFormatterProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    _controller = JsonHighlightController(
-      isDark: isDark,
-      enableHighlight: true,
-    );
+    _controller.isDark = isDark;
 
     // Synchronize state changes into controller text
     final stateText = widget.isReadOnly
