@@ -28,7 +28,11 @@ class JsonHighlightController extends TextEditingController {
     notifyListeners();
   }
 
-  List<TextSpan> _applySearchHighlight(String segmentText, TextStyle? baseStyle, int segmentOffset) {
+  List<TextSpan> _applySearchHighlight(
+    String segmentText,
+    TextStyle? baseStyle,
+    int segmentOffset,
+  ) {
     if (searchQuery.isEmpty) {
       return [TextSpan(text: segmentText, style: baseStyle)];
     }
@@ -36,46 +40,47 @@ class JsonHighlightController extends TextEditingController {
     final List<TextSpan> spans = [];
     final lowerSegment = segmentText.toLowerCase();
     final lowerQuery = searchQuery.toLowerCase();
-    
+
     int start = 0;
     int index = lowerSegment.indexOf(lowerQuery, start);
-    
+
     if (index == -1) {
       return [TextSpan(text: segmentText, style: baseStyle)];
     }
 
     while (index != -1) {
       if (index > start) {
-        spans.add(TextSpan(
-          text: segmentText.substring(start, index),
-          style: baseStyle,
-        ));
+        spans.add(
+          TextSpan(text: segmentText.substring(start, index), style: baseStyle),
+        );
       }
 
-      final matchText = segmentText.substring(index, index + searchQuery.length);
+      final matchText = segmentText.substring(
+        index,
+        index + searchQuery.length,
+      );
       final absoluteIndex = segmentOffset + index;
       final isActive = absoluteIndex == currentMatchStart;
 
-      spans.add(TextSpan(
-        text: matchText,
-        style: baseStyle?.copyWith(
-          backgroundColor: isActive 
-              ? Colors.orange.withValues(alpha: 0.7) 
-              : Colors.yellow.withValues(alpha: 0.4),
-          color: isActive ? Colors.white : baseStyle.color,
-          fontWeight: isActive ? FontWeight.bold : baseStyle.fontWeight,
+      spans.add(
+        TextSpan(
+          text: matchText,
+          style: baseStyle?.copyWith(
+            backgroundColor: isActive
+                ? Colors.orange.withValues(alpha: 0.7)
+                : Colors.yellow.withValues(alpha: 0.4),
+            color: isActive ? Colors.white : baseStyle.color,
+            fontWeight: isActive ? FontWeight.bold : baseStyle.fontWeight,
+          ),
         ),
-      ));
+      );
 
       start = index + searchQuery.length;
       index = lowerSegment.indexOf(lowerQuery, start);
     }
 
     if (start < segmentText.length) {
-      spans.add(TextSpan(
-        text: segmentText.substring(start),
-        style: baseStyle,
-      ));
+      spans.add(TextSpan(text: segmentText.substring(start), style: baseStyle));
     }
 
     return spans;
@@ -233,7 +238,9 @@ class JsonHighlightController extends TextEditingController {
         continue;
       }
 
-      finalChildren.addAll(_applySearchHighlight(spanText, span.style, currentOffset));
+      finalChildren.addAll(
+        _applySearchHighlight(spanText, span.style, currentOffset),
+      );
       currentOffset += spanText.length;
     }
 
@@ -269,10 +276,7 @@ class _JsonEditorWidgetState extends ConsumerState<JsonEditorWidget> {
   @override
   void initState() {
     super.initState();
-    _controller = JsonHighlightController(
-      isDark: false,
-      enableHighlight: true,
-    );
+    _controller = JsonHighlightController(isDark: false, enableHighlight: true);
     _textScrollController = ScrollController();
     _lineScrollController = ScrollController();
     _focusNode = FocusNode();
@@ -327,13 +331,43 @@ class _JsonEditorWidgetState extends ConsumerState<JsonEditorWidget> {
     }
   }
 
-  void _selectAndScrollToMatch(int start, int length, {bool requestFocus = false}) {
+  void _selectAndScrollToMatch(
+    int start,
+    int length, {
+    bool requestFocus = false,
+  }) {
     _controller.selection = TextSelection(
       baseOffset: start,
       extentOffset: start + length,
     );
     if (requestFocus) {
       _focusNode.requestFocus();
+    }
+
+    // Programmatically scroll the text editor to center the matched line
+    final settings = ref.read(settingsProvider);
+    final text = _controller.text;
+    if (start >= 0 && start <= text.length) {
+      final textBeforeMatch = text.substring(0, start);
+      final lineIndex = '\n'.allMatches(textBeforeMatch).length;
+      final lineHeight = settings.fontSize * 1.5;
+      final targetOffset = lineIndex * lineHeight;
+
+      if (_textScrollController.hasClients) {
+        final viewportHeight = _textScrollController.position.viewportDimension;
+        double centeredOffset =
+            targetOffset - (viewportHeight / 2) + (lineHeight / 2);
+
+        final maxScroll = _textScrollController.position.maxScrollExtent;
+        final minScroll = _textScrollController.position.minScrollExtent;
+        centeredOffset = centeredOffset.clamp(minScroll, maxScroll);
+
+        _textScrollController.animateTo(
+          centeredOffset,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
     }
   }
 
@@ -393,8 +427,10 @@ class _JsonEditorWidgetState extends ConsumerState<JsonEditorWidget> {
 
     try {
       final isMinified = text.trim().startsWith('{') && !text.contains('\n');
-      final filename = isMinified ? 'minified_json.json' : 'formatted_json.json';
-      
+      final filename = isMinified
+          ? 'minified_json.json'
+          : 'formatted_json.json';
+
       downloadFile(text, filename);
       _showSnackBar('Downloading file...', isError: false);
     } catch (e) {
